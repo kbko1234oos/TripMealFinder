@@ -22,9 +22,6 @@ const createLocationInfoType = async () => {
   try {
     await pool.query(`
       CREATE TYPE location_info AS (
-        place_id VARCHAR(255),
-        name VARCHAR(255),
-        address VARCHAR(255),
         latitude DECIMAL(10, 8),
         longitude DECIMAL(11, 8)
       );

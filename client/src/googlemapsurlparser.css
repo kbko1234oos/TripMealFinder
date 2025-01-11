@@ -1,0 +1,33 @@
+/* App.css or MapStyles.css */
+
+.map_container {
+    display: flex;
+    justify-content: center; /* Center horizontally */
+    align-items: center;     /* Center vertically */
+    height: 70vh;          /* Full viewport height */
+    width: 100vw;           /* Full viewport width */
+    position: relative;      /* Positioning context for absolute children */
+  }
+  
+.google_map {
+height: 600px;          /* Desired height of the map */
+width: 1000px;           /* Desired width of the map */
+}
+
+
+.form {
+    text-align: center;
+}
+
+.form div {
+    margin-bottom: 10px; /* Add some space between input fields */
+}
+
+label {
+    margin-right: 10px; /* Space between label and input */
+}
+
+h1 {
+    margin-bottom: 20px; /* Space between title and form */
+}
+  
