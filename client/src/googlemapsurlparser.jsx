@@ -1,61 +1,9 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { GoogleMap, LoadScript, DirectionsService, DirectionsRenderer, Marker } from '@react-google-maps/api';
 import './googlemapsurlparser.css'; 
-
+import { createSession } from './createsession.jsx';
+import { findMealTimePoint } from './findmealtimepoint.jsx';
 const static_libraries = ['places', 'geometry'];
-
-const convertTimeStringToSeconds = (timeString) => {
-  // Split the time string by the colon to get hours and minutes
-  const [hours, minutes] = timeString.split(':').map(Number);
-  
-  // Return the hours as a numerical value
-  return (hours * 60 + minutes) * 60;
-}
-
-const findMealTimePoint = (directionsResult, departureTime, mealTime) => {
-  const route = directionsResult.routes[0];
-  let elapsedTime = 0; // Total elapsed time in seconds
-  let depTime = convertTimeStringToSeconds(departureTime);
-  let mTime = convertTimeStringToSeconds(mealTime);
-  console.log('deptime: ' + depTime);
-  console.log('mtime:' + mTime);
-  console.log(route.legs)
-
-  // Iterate through each leg of the route
-  for (let leg of route.legs) {
-    // Iterate through each step in the leg
-    for (let step of leg.steps) {
-      const stepDuration = step.duration.value; // Duration of the current step in seconds
-      elapsedTime += stepDuration; // Update total elapsed time
-      console.log(elapsedTime);
-      console.log("elapsedTime + depTime " + elapsedTime + depTime)
-
-      // Check if we've reached or exceeded the meal time
-      if (elapsedTime + depTime >= mTime) {
-        // Calculate how much time we have left in this step
-        const remainingTime = elapsedTime + depTime - mTime;
-
-        // Find the fraction of this step that corresponds to the remaining time
-        const fractionOfStep = remainingTime / stepDuration;
-
-        // Find the starting point of this step
-        const startPoint = new google.maps.LatLng(step.start_location.lat(), step.start_location.lng());
-        console.log(startPoint.lat());
-        const endPoint = new google.maps.LatLng(step.end_location.lat(), step.end_location.lng());
-        console.log(endPoint.lat());
-
-        console.log(google.maps.geometry.spherical.interpolate(startPoint, endPoint, fractionOfStep));
-
-        // Interpolate to find the exact point along this step
-        return google.maps.geometry.spherical.interpolate(startPoint, endPoint, fractionOfStep);
-      }
-    }
-  }
-
-  // If we never reach meal time, return departure coordinates (start location)
-  const startLocation = new google.maps.LatLng(route.legs[0].start_location.lat(), route.legs[0].start_location.lng());
-  return startLocation;
-};
 
 const GoogleMapsUrlParser = () => {
   const [url, setUrl] = useState('');
@@ -65,7 +13,8 @@ const GoogleMapsUrlParser = () => {
   const [mealLocation, setMealLocation] = useState(null);
   const [departureTime, setDepartureTime] = useState('');
   const [mealTime, setMealTime] = useState('');
-
+  const [sessionId, setSessionId] = useState('');
+  const [nearbyRestaurants, setNearbyRestaurants] = useState([]);
 
   const parseGoogleMapsLink = useCallback((link) => {
     const parsedUrl = new URL(link);
@@ -114,7 +63,7 @@ const GoogleMapsUrlParser = () => {
     setMealTime(e.target.value);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setDirections(null);
     if (!url || !departureTime || !mealTime) {
@@ -127,24 +76,66 @@ const GoogleMapsUrlParser = () => {
     console.log('Setting url:', url);
 
     setUrl(url);
-    setDepartureTime(departureTime);
-    setMealTime(mealTime);
+    // setDepartureTime(departureTime);
+    // setMealTime(mealTime);
     const parsed = parseGoogleMapsLink(url);
+    console.log("parsed");
+    console.log(parsed);
     setParsedData(parsed);
     setDirectionsRequested(true);
+    const session = await createSession({ latitude: 0.0, longitude: 0.0 }, { latitude: 0.0, longitude: 0.0 }, convertTimeToDate(departureTime), convertTimeToDate(mealTime));
+    setSessionId(session.session_id);
   };
 
-  const directionsCallback = useCallback((response) => {
+  const convertTimeToDate = (timeString) => {
+    const now = new Date();
+    const [hours, minutes] = timeString.split(':').map(Number);
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+    
+    return date;
+  }
+
+  const fetchNearbyRestaurants = async (latitude, longitude) => {
+    try {
+      const response = await fetch(`/api/restaurants?lat=${latitude}&lng=${longitude}`);
+      
+      // Log the response for debugging
+      const text = await response.text(); // Read response as text
+      console.log('Response:', text); // Log the raw response
+  
+      // Check if the response is OK
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+  
+      // Parse the JSON body of the response
+      const restaurants = JSON.parse(text); // Parse the logged text as JSON
+      return restaurants; // Return the list of restaurants
+    } catch (error) {
+      console.error('Error fetching nearby restaurants:', error);
+      return []; // Return an empty array on error
+    }
+  };
+  
+  const directionsCallback = useCallback(async (response) => {
     if (response !== null && response.status === 'OK') {
       setDirections(response);
-      const calculatedMealLocation = findMealTimePoint(response, departureTime, mealTime);
+      
+      // Calculate meal location based on the directions response
+      const calculatedMealLocation = findMealTimePoint(response, departureTime, mealTime, sessionId);
       setMealLocation(calculatedMealLocation);
+  
+      // Fetch nearby restaurants using the calculated meal location coordinates
+      const restaurants = await fetchNearbyRestaurants(calculatedMealLocation.lat(), calculatedMealLocation.lng());
+      
+      setNearbyRestaurants(restaurants); // Store fetched restaurants in state
     } else {
       setDirections(null);
       console.log('Directions request failed');
     }
     setDirectionsRequested(false);
   }, []);
+  
 
   const directionsOptions = useMemo(() => {
     if (!parsedData) return null;
@@ -194,16 +185,6 @@ const GoogleMapsUrlParser = () => {
         <button type="submit">Find!</button>
       </form>
 
-      {/* {parsedData && (
-        <div>
-          <h2>Parsed Data:</h2>
-          <p>Origin: {parsedData.origin}</p>
-          <p>Destination: {parsedData.destination}</p>
-          <p>Waypoints: {parsedData.waypoints.join(', ')}</p>
-          <p>Travel Mode: {parsedData.travelMode}</p>
-        </div>
-      )} */}
-
       <LoadScript googleMapsApiKey={import.meta.env.VITE_ADDR_VALID_API_KEY} libraries={static_libraries}>
         <div className="map_container">
           <GoogleMap
@@ -228,6 +209,17 @@ const GoogleMapsUrlParser = () => {
                 label="Meal?"
               />
             )}
+
+            {nearbyRestaurants.map((restaurant) => (
+              <Marker
+                key={restaurant.place_id} // Unique key for each marker
+                position={{
+                  lat: restaurant.location.lat,
+                  lng: restaurant.location.lng,
+                }}
+                label={restaurant.name} // Display restaurant name as label
+              />
+            ))}
           </GoogleMap>
         </div>
       </LoadScript>

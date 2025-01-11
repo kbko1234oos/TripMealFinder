@@ -18,46 +18,85 @@ const pool = new Pool({
   port: 5432,
 });
 
+const updateMealLocation = async (sessionId, mealLocation) => {
+  console.log(mealLocation);
+  console.log("mealLocation")
+  const mealLoc = `(${mealLocation.latitude}, ${mealLocation.longitude})`;
+  console.log(mealLoc);
+
+  const result = await pool.query(
+    `UPDATE sessions 
+     SET meal_location = $1::location_info
+     WHERE session_id = $2
+     RETURNING *`,
+    [mealLoc, sessionId]
+  );
+
+  return result;
+};
+
 const createLocationInfoType = async () => {
-  try {
-    await pool.query(`
-      CREATE TYPE location_info AS (
-        latitude DECIMAL(10, 8),
-        longitude DECIMAL(11, 8)
-      );
-    `);
-    console.log('Type location_info created successfully.');
-  } catch (error) {
-    if (error.code === '42P07') { // Duplicate type error code
-      console.log('Type location_info already exists.');
-    } else {
+  const typeExistsQuery = `
+    SELECT EXISTS (
+      SELECT 1 
+      FROM pg_type 
+      WHERE typname = 'location_info'
+    );
+  `;
+  
+  const result = await pool.query(typeExistsQuery);
+  const typeExists = result.rows[0].exists;
+
+  if (!typeExists) {
+    try {
+      await pool.query(`
+        CREATE TYPE location_info AS (
+          latitude DECIMAL(10, 8),
+          longitude DECIMAL(11, 8)
+        );
+      `);
+      console.log('Type location_info created successfully.');
+    } catch (error) {
       console.error('Error creating type location_info:', error);
     }
+  } else {
+    console.log('Type location_info already exists.');
   }
 };
 
-
 const createSessionsTable = async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        id SERIAL PRIMARY KEY,
-        session_id UUID DEFAULT gen_random_uuid(),
-        start_location location_info,
-        destination_location location_info,
-        departure_time TIMESTAMP,
-        meal_time TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        expires_at TIMESTAMP
-      );
-    `);
-    console.log('Table for sessions created successfully.');
-  } catch (error) {
-    if (error.code === '42P07') {
-      console.log('Type location_info already exists.');
-    } else {
-      console.error('Error creating type location_info:', error);
+  const tableExistsQuery = `
+    SELECT EXISTS (
+      SELECT 1 
+      FROM information_schema.tables 
+      WHERE table_name = 'sessions'
+    );
+  `;
+
+  const result = await pool.query(tableExistsQuery);
+  const tableExists = result.rows[0].exists;
+
+  if (!tableExists) {
+    try {
+      await pool.query(`
+        CREATE TABLE sessions (
+          id SERIAL PRIMARY KEY,
+          session_id UUID DEFAULT gen_random_uuid(),
+          start_location location_info,
+          destination_location location_info,
+          meal_location location_info,
+          departure_time TIMESTAMP,
+          meal_time TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          expires_at TIMESTAMP
+        );
+      `);
+      console.log('Table for sessions created successfully.');
+    } catch (error) {
+      console.error('Error creating sessions table:', error);
     }
+  } else {
+    console.log('Table sessions already exists.');
   }
 };
 
@@ -71,19 +110,32 @@ const initializeDatabase = async () => {
   }
 };
 
-module.exports = {
-  query: (text, params) => pool.query(text, params),
-  createSession: async (startLocation, destinationLocation, departureTime, mealTime, expiresAt) => {
+const createSession = async (startLocation, destinationLocation, departureTime, mealTime, expiresAt) => {
+  try {
+    const startLoc = `(${startLocation.latitude}, ${startLocation.longitude})`;
+    const destinationLoc = `(${destinationLocation.latitude}, ${destinationLocation.longitude})`;
     const result = await pool.query(
       `INSERT INTO sessions 
-       (start_location, destination_location, departure_time, meal_time, expires_at)
-       VALUES ($1::location_info, $2::location_info, $3, $4, $5)
-       RETURNING *`,
-      [startLocation, destinationLocation, departureTime, mealTime, expiresAt]
+        (start_location, destination_location, departure_time, meal_time, expires_at)
+        VALUES ($1::location_info, $2::location_info, $3, $4, $5)
+        RETURNING *`,
+      [startLoc, destinationLoc, departureTime, mealTime, expiresAt]
     );
-    return result.rows[0];
-  },
-  initializeDatabase
+    
+    return result.rows[0]; // This will include all fields including session_id
+  } catch (error) {
+    console.error('Error creating session:', error);
+    throw error; 
+  }
+};
+
+// Exporting the functions
+module.exports = {
+  pool,
+  query: (text, params) => pool.query(text, params),
+  createSession,
+  initializeDatabase,
+  updateMealLocation
 };
 
 app.listen(port, function () {
